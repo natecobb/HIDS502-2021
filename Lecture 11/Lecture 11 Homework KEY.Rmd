@@ -1,0 +1,206 @@
+---
+title: "Lecture 11 Homework KEY"
+author: "Nathan Cobb"
+date: "11/8/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse) # loads the tidyverse tools
+library(DBI) # loads our database interface
+library(RPostgres) # loads the database driver for PostgreSQL
+library(connections) # helps RPostgres work with RStudio
+
+
+# Normally we would use `DBI::dbConnect()` here, but the `RPostgres` library
+# doesn't integrate with the RStudio connections pane. This works around that fact.
+con <- connection_open(RPostgres::Postgres(),
+          dbname = "syntheticmguh",
+          host = "35.199.26.47",
+          user = "hids502_student",
+          password = "pursuit-parson-trivial",
+          # Tell the driver to return very large integers as floating point (vs truncating them)
+          bigint = "numeric")
+```
+
+# SyntheticMGUH As Big Data
+
+For this homework you should act as if the report will be distributed, thus cannot return any PHI. **Do not include identifiers such as names or medical record numbers at the individual level in your results** Avoid returning individual rows unless you want to indicate the structure of a result set for some reason - you should be returing summary data at this point.
+
+
+
+# Metadata
+
+The Synthea data set holds a `imaging` table with meta data. The meta data describes the modality and type of imaging study. Create a summary table to provide an overview of the most common types of imaging studies performed. (Do not return individual rows, summarize and present the data.)
+
+```{sql connection=con}
+SELECT modality_description, modality_code,
+   count(*) as studies, count(distinct patient) as patients
+FROM imaging_studies
+GROUP BY modality_description, modality_code
+```
+
+We can also include the body site in our summary:
+
+```{sql connection=con}
+SELECT modality_description, modality_code, bodysite_description,
+   count(*) as studies, count(distinct patient) as patients
+FROM imaging_studies
+GROUP BY modality_description, modality_code,
+     bodysite_description
+```
+
+Here we see that the data is messy - computed radiography is essentially a synonym for digital radiography, so we have two ways of coding our thoracic (chest) xrays. Computed tomography on the other hand is CT or "CAT" scan. Also, capitalization isn't consistent which causes our grouping to be off (not all databases are case sensitive though!)
+
+What if we try to clean up the coding a bit to see what the numbers actually look like?
+
+```{sql connection=con}
+SELECT CASE WHEN modality_description = 'Computed Radiography' THEN 'Digital Radiography' ELSE modality_description END AS modality,
+  CASE WHEN modality_code = 'CR' THEN 'DX' ELSE modality_code END AS modality_cd,
+  CASE WHEN lower(bodysite_description) LIKE '%thoracic%' THEN 'thoracic'
+     ELSE lower(bodysite_description) END bodysite,
+   count(*) as studies, count(distinct patient) as patients
+FROM imaging_studies
+GROUP BY modality,  modality_cd ,
+    bodysite
+```
+
+# Full Text
+
+## Asthma
+
+Using free text search, locate all of the patients whose notes indicated they may have asthma. * Do not return the patients, but return a summary of the cohort*
+
+
+
+```{sql connection=con}
+SELECT count(distinct patient) 
+FROM notes
+WHERE note_text LIKE '%asthma%' OR note_text LIKE '%Asthma%' 
+```
+
+How many of the patients you identified have a condition listed as 'asthma' in the `conditions` table?
+
+```{sql connection=con}
+WITH asthma_cohort AS (
+  SELECT DISTINCT patient
+  FROM notes
+  WHERE note_text LIKE '%asthma%' OR note_text LIKE '%Asthma%' 
+)
+SELECT count(DISTINCT conditions.patient)
+FROM conditions
+  JOIN asthma_cohort
+  ON asthma_cohort.patient = conditions.patient
+WHERE conditions.description IN ('Asthma', 'Childhood asthma')
+```
+
+## Allergies
+
+Some CT scans are done with "contrast", an intravenous form of dye to make the scan results clearer. People with shellfish allergies may have a similar reaction to contrast dye.
+
+Allergies are available in Synthea in the allergy table, but in the real world this is not always so clear. Using only the `notes` table, find all the patients that have an shellfish allergy, and then using the `imaging` table determine home many of those patients have had a CT scan.
+
+```{sql connection=con}
+SELECT count(distinct patient) 
+FROM notes
+WHERE note_text LIKE '%shellfish allergy%' OR note_text LIKE '%Shellfish allergy%'
+```
+
+```{sql connection=con}
+WITH shellfish_cohort AS (
+  SELECT DISTINCT patient
+  FROM notes
+  WHERE note_text LIKE '%shellfish allergy%' OR note_text LIKE '%Shellfish allergy%'
+)
+SELECT count(DISTINCT imaging_studies.patient)
+FROM imaging_studies
+  JOIN shellfish_cohort
+  ON shellfish_cohort.patient = imaging_studies.patient
+WHERE modality_code = 'CT'
+```
+
+
+How many of these had the scan *after* the allergy was identified?
+
+```{sql connection=con}
+WITH shellfish_cohort AS (
+  SELECT DISTINCT patient, min(date) AS first_observed
+  FROM notes
+  WHERE note_text LIKE '%shellfish allergy%' OR note_text LIKE '%Shellfish allergy%'
+  GROUP BY patient
+)
+SELECT count(DISTINCT imaging_studies.patient)
+FROM imaging_studies
+  JOIN shellfish_cohort
+  ON shellfish_cohort.patient = imaging_studies.patient
+    AND imaging_studies.date > first_observed
+WHERE modality_code = 'CT'
+```
+
+# Patient Matching
+
+How many patients in the Synthea database have the same first and last name? How many have the same first, last, gender and live in the same zip code?
+Hint: You can do this with a `JOIN` approach or a `GROUP BY` approach. If you use the latter you may want to look at the `HAVING` command as a filter.
+
+```{sql connection=con}
+WITH duplicated_patients AS (
+  SELECT first, last, count(*) patient_count
+  FROM patients
+  GROUP BY first, last
+  HAVING count(*) > 1
+)
+SELECT sum(patient_count) -- We are counting PAIRS here, not patients
+ FROM duplicated_patients
+```
+
+What about people with the same name, gender and living in the same zip?
+
+```{sql connection=con}
+WITH duplicated_patients AS (
+  SELECT first, last, gender, zip, count(*) patient_count
+  FROM patients
+  GROUP BY first, last, gender, zip
+  HAVING count(*) > 1
+)
+SELECT SUM(patient_count) AS patient_count -- We are counting PAIRS here, not patients
+ FROM duplicated_patients
+```
+
+```{sql connection=con}
+SELECT COUNT(DISTINCT p1.id) AS patient_count-- Here we are counting actual patients
+FROM patients p1
+  JOIN patients p2
+  ON p1.first = p2.first
+  AND p1.last = p2.last
+  AND p1.gender = p2.gender
+  AND p1.zip = p2.zip
+  -- This makes sure we don't match against themselves
+  AND p1.id != p2.id
+```
+
+## Bonus
+
+How many patients might have duplicate accounts based on middle name or first name errors? (You may not find any ... but show me how you would approach this.) {NOTE - there are no middle names in Synthea, so this should have read just first name!}
+
+Counting is very difficult here. Essentially we can no longer think of a row being a patient, because a patient might have more than one record.
+
+
+```{sql connection=con}
+--SELECT COUNT(DISTINCT p1.id) AS patient_count 
+SELECT p1.id, p1.first, METAPHONE(p1.first, 8), p2.id, p2.first, METAPHONE(p2.first, 8)
+FROM patients p1
+  JOIN patients p2
+  ON 
+    -- Exclude good matches
+    p1.first != p2.first
+    -- And look for fuzzy matches
+    AND METAPHONE(p1.first, 8) = METAPHONE(p2.first, 8)
+    -- These are required matches 
+    AND p1.last = p2.last
+    AND p1.gender = p2.gender
+    AND p1.zip = p2.zip
+  -- This makes sure we don't match against themselves
+  AND p1.id != p2.id
+  ORDER by p1.id
+```

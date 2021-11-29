@@ -1,0 +1,143 @@
+---
+title: "Lecture 9 In Class Examples"
+author: "Nathan Cobb"
+date: "10/31/2021"
+output: 
+  html_document: 
+    toc: yes
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse) # loads the tidyverse tools
+library(DBI) # loads our database interface
+library(RPostgres) # loads the database driver for PostgreSQL
+library(connections) # helps RPostgres work with RStudio
+
+
+# Normally we would use `DBI::dbConnect` here, but the `RPostgres` library
+# doesn't integrate with the RStudio connections pane. This works around that fact.
+# If you use `odbc` then you don't need this. 
+con <- connection_open(RPostgres::Postgres(),
+          dbname = "syntheticmguh",
+          host = "35.199.26.47",
+          user = "hids502_student",
+          password = "pursuit-parson-trivial",
+          # Tell the driver to return very large integers as floating point (vs truncating them)
+          bigint = "numeric")
+```
+
+# Recoding Data
+
+## Sequential Codes
+
+```{sql connection=con}
+WITH my_lookup_table AS (
+  select encounterclass, count(*) total_rows, 
+  row_number() OVER() AS row_number
+  FROM encounters 
+  GROUP BY encounterclass
+)
+SELECT * FROM my_lookup_table
+```
+
+## Lookup Tables
+
+```{sql connection=con}
+SELECT * FROM codes LIMIT 10
+```
+
+This is what a regular procedures table might look like - codes, but no text!
+
+```{sql connection=con}
+select patient, encounter, date, procedures.code, reasoncode
+from procedures LIMIT 10
+```
+
+We'd need to know the type of code (the vocabulary) and have a lookup table.
+
+```{sql connection=con}
+select encounter, procedures.code, c1.description code_text, reasoncode, c2.description reason_text
+from procedures
+ LEFT JOIN codes c1 on c1.code = procedures.code
+  AND c1.vocab = 'SNOMED'
+ LEFT JOIN codes c2 on c2.code = procedures.reasoncode
+  AND c1.vocab = 'SNOMED'
+LIMIT 10
+```
+
+# Deidentification
+
+## Cryptographic Hashing
+
+```{sql connection=con}
+SELECT first, MD5(first) AS hashed_first 
+FROM patients
+LIMIT 10
+```
+
+## Date Shifting
+
+Here the date offset is 35 days for everyone, in reality we want a different offset for each person. You need a way to create a random offset for each person, save that number, and then apply that number to every other table.
+
+```{sql connection=con}
+SELECT encounters.id, patient ,
+birthdate, birthdate + (35 * interval '1 day') as birthdate_shifted,
+start, start + (35 * interval '1 day') as start_shifted,
+stop, stop + (35 * interval '1 day') as stop_shifted
+FROM patients
+  JOIN encounters on encounters.patient = patients.id
+WHERE patient = 'a5e148ad-ede3-2afb-a3c4-f02dc8328ca4'
+```
+
+# Miscellaneous Examples
+
+These are a few SQL techniques that you will likely need. They are here to jog your memory.
+
+```{sql connection=con}
+SELECT 
+  'HID502 2012' as example_text, MD5('HIDS502 20120') as example_text_md5,
+  row_number() OVER () as row_number_example,
+  date_part('year', CAST('2020-01-01' AS DATE)) as year_example,
+  age(CAST('2025-01-19' AS DATE), 
+      CAST('1946-06-14' AS DATE)) AS age_example,
+  cast(random() * 10000 as INT) as random_example,
+  cast(right('123-42-2222', 4) AS INT) AS string_extraction_example
+```
+
+# ETL
+
+There are many ways to do ETL, here are a couple of examples.
+
+## ETL with R
+
+Here we are going to do our ETL entirely with R
+
+### Extract
+```{r}
+sql_statement <- "
+SELECT patient, race, ethnicity, encounters.id AS encounter_id
+  FROM patients
+  JOIN encounters 
+    ON encounters.patient = patients.id
+  WHERE deathdate > '2019-01-01'"
+df <- dbGetQuery(con, sql_statement)
+df
+```
+### Transform
+```{r}
+transformed_df <-
+  group_by(df, race, ethnicity) %>% 
+  summarize(total_encounters = n())
+transformed_df
+```
+
+### Load
+```{r}
+dbWriteTable(con, "my_summary", transformed_df, temporary = T, overwrite = T)
+```
+
+```{r}
+dbGetQuery(con, "SELECT * FROM my_summary LIMIT 5")
+```
+

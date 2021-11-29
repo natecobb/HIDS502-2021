@@ -1,0 +1,88 @@
+---
+title: "Lecture 03 Project KEY"
+author: "Nathan Cobb"
+date: "9/13/2021"
+output: html_document
+---
+
+This is an example RMarkdown document that shows how to connect to the Synthetic MGUH database (a PostgreSQL database in the Google Cloud environment). RMarkdown is most commonly used to execute chunks of R code sequentially, but can be used for many different kinds of code, including Python or even SQL. Here we will use it as a wrapper around SQL and RStudio as a basic interface to our database to query the database.
+
+After executing the first chunk, you should have be able to see "syntheticmguh" in the connections pane and use that to browse the tables and fields.
+
+```{r}
+library(tidyverse) # loads the tidyverse tools
+library(DBI) # loads our database interface
+library(RPostgres) # loads the database driver for PostgreSQL
+library(connections) # helps RPostgres work with RStudio
+
+
+# Normally we would use `DBI::dbConnect` here, but the `RPostgres` library
+# doesn't integrate with the RStudio connections pane. This works around that fact.
+# If you use `odbc` then you don't need this. 
+con <- connection_open(RPostgres::Postgres(),
+          dbname = "syntheticmguh",
+          host = "35.199.26.47",
+          user = "hids502_student",
+          password = "pursuit-parson-trivial")
+```
+
+# Question 1
+
+How many patients do we have in the database?
+
+```{sql connection=con}
+SELECT COUNT(*) AS patient_count
+FROM patients 
+```
+
+
+How many providers and payers are represented in the data set?
+
+```{sql connection=con}
+-- Your code goes here
+```
+
+# Question 2
+
+What is the mean amount spent per patient?
+
+What does this look like per year?
+
+# Question 3
+
+What is the mean amount spent for Medicare patients?
+
+What does this look like per year?
+
+# Question 4
+
+What is the min/max and mean number of patients per provider?
+
+Plot this as a boxplot – this will require you to use R
+
+Here's an example of a boxplot
+
+```{sql connection=con, output.var="expenses_df"}
+-- Here we use `output.var` to assign the results of the query to a variable
+-- rather than printing!
+SELECT id, race, healthcare_expenses FROM patients
+```
+
+```{r}
+ggplot(expenses_df) + 
+  geom_boxplot(aes(x = healthcare_expenses, y = race))
+```
+
+# Question 5
+
+What is the min/max and mean number of encounters per patient in 2019? 
+
+Plot the distribution as a histogram – this will require you to use R
+
+Here's an example of a boxplot
+
+```{r}
+ggplot(expenses_df) + 
+  geom_histogram(aes(x = healthcare_expenses))
+```
+

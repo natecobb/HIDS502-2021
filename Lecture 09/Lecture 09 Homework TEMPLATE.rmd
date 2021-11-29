@@ -1,0 +1,55 @@
+---
+title: "Lecture 09 Homework Framework"
+author: "Nathan Cobb"
+date: "10/31/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse) # loads the tidyverse tools
+library(DBI) # loads our database interface
+library(RPostgres) # loads the database driver for PostgreSQL
+library(connections) # helps RPostgres work with RStudio
+
+
+# Normally we would use `DBI::dbConnect` here, but the `RPostgres` library
+# doesn't integrate with the RStudio connections pane. This works around that fact.
+# If you use `odbc` then you don't need this. 
+con <- connection_open(RPostgres::Postgres(),
+          dbname = "syntheticmguh",
+          host = "35.199.26.47",
+          user = "hids502_student",
+          password = "pursuit-parson-trivial",
+          # Tell the driver to return very large integers as floating point (vs truncating them)
+          bigint = "numeric")
+```
+
+# SyntheticMGUH Registry
+
+A clinician has collected a series of patients that they will to work with other researchers on. This collection was derived from an EMR and is present in the SyntheticMGUH database as a table called `inpatientregistry` (technically a view). 
+
+* [NIH PHI Review](https://privacyruleandresearch.nih.gov/pr_08.asp#8a) - Includes the 18 elements
+
+They have placed their registry in your regulard database in a table called `inpatientregistry`. Note that it contains columns that are identifiers, and columns that are not. *Your homework report should not contain any identifiers. You will be docked points if it does.*
+
+```{sql connection=con}
+-- Note that you should delete this section, its just an example
+SELECT * FROM inpatientregistry LIMIT 5
+```
+
+# Fully De-identified Table
+
+Create and return a data set that is fully de-identified.
+
+ * Include all dates 'date shifted'
+ * Include the age at the time of admission and age at the date of death (from the original dates)
+ * Include as much of the data as possible, without violating HIPAA!
+
+# Limited Data Set Table
+
+Create and return a data set that is de-identified to HIPAA standards.
+
+# Demonstrate Equivilence
+
+Show that the 3 tables are equivilent, that we have not lost or corrupted any data in the process. At the minumum, show that you have the same number of unique identifiers (in other words, your deidentified results have the exact same number of patients as the original table.)
